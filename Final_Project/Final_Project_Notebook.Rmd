@@ -1,0 +1,1230 @@
+---
+title: "Data Science Final Project"
+output: html_notebook
+---
+
+The data analysis is conducted on "Medical No Shows" which is a dataset that contains 14 features with over 100,000 entries. The objective of the data analysis is to predict whether or not a patient will show up using the other 14 features to predict the feature "No.show". The goal of the analysis is to help predict no shows so that medical establishments can better allocate resources. The following is a short description of the features that may not be self explanatory:
+
+PatientID: Unique identifier for each patient. It does not offer any data as to whether or not they are more or less likely to show up to an appointment.
+AppointmentDay: The day and time the appointment was actually booked.
+ScheduledDay: The day and time the appointment was booked. 
+Neighborhood: Where the patient lives.
+Boolean Variables: 1 represents that the patient has the condition and 0 represents that the patient does not. 
+
+First, we cleaned the data. We removed time from AppointmentDay because it was 0 across all rows. We also set negative ages to 0, corrected spelling mistakes, and removed rows that had an AppointmentDay before the ScheduledDay. After, we had to better organize the data. Neighborhoods was sorted by frequency to reduce the number of factors. Factors that were not very common were sorted into a "Other". The reduced factors allows for all models we want to use to run. We also had to create dummy variables for Neighborhood for other models. 
+
+Once data was cleaned, the data was visualized to better understand the data and how it interacts. 
+
+```{r}
+Packages <- c(
+      "dplyr",
+      "tidyr",
+      "ggplot2",
+      "rpart",
+      "rpart.plot",
+      "caTools")
+
+lapply(Packages, library, character.only = TRUE)
+```
+
+```{r}
+data <- read.csv("KaggleV2-May-2016.csv", header= TRUE, stringsAsFactors = FALSE)
+head(data)
+
+data$Age[data$Age < 0] <- 0
+
+#Th following creates a column for the number of days between the scheduling day and the appointment day
+data$dateDiff <- as.Date(as.character(data$AppointmentDay, "%Y, %m, %d")) - as.Date(as.character(data$ScheduledDay, "%Y, %m, %d"))
+data$dateDiff[data$dateDiff >= 50] <- "Other"
+data$dateDiff[data$dateDiff < 0] <- 0
+print(unique(data$dateDiff))
+
+
+#To create less factors for Neighborhood, I will condense the data by grouping non-frequent data entries into an "Other" category.
+toCondense <- names(which(prop.table(table(data$Neighbourhood)) < .01))
+data$Neighbourhood[data$Neighbourhood %in% toCondense] <- "Other"
+
+
+head(data)
+#The number of factors in Neighborhood has been reduced to an acceptable amount to be able to run a deceision tree model
+unique(data$Neighbourhood)
+
+status_table <- table(data$No.show)
+status_table
+```
+The following shows a chart of the number of no shows vs. the number of attended appointments
+```{r}
+#Shows the number of no shows vs shows (No being a show up and yes being a no show)
+ggplot(data, aes(x=No.show, fill=No.show)) + geom_bar()
+
+```
+The following shows density of no shows and non no shows based on the day of the week the appointment is and when it was booked. It shows that there is a lot of data for Friday and almost no data for Saturday and Sunday (which makes sense because many places close). It does not show a difference in show/no show when it comes to the date however. 
+```{r}
+#The following shows the density of show vs no show depending on the day the appointment is made and when the appointment is
+ggplot(data, aes(x=weekdays(as.Date(data$ScheduledDay)), fill=No.show)) + geom_density() + facet_grid(.~No.show)
+ggplot(data, aes(x=weekdays(as.Date(data$AppointmentDay)), fill=No.show)) + geom_density() + facet_grid(.~No.show)
+
+#The data shows that most appointments occur on Fridays but there is no correlation for no show vs. show when it comes to the day the appointment is or when the appointment is booked
+```
+The following is some visualization on how age can affect showing up to an appointment. We can see that we have a lot more data for the younger - middle age portion of the population and that the age for not showing up is a little less than the age for showing up (average ages), which may signify that younger people have a higher risk of not showing up
+```{r}
+#Shows a histogram of data for no shows based on age. From the first graph it looks like younger people don't show up to appointments more than older people
+ggplot(data, aes(x=Age)) + geom_histogram(bins=40)
+ggplot(data, aes(x=No.show, y=Age, col=No.show)) + geom_boxplot()
+```
+The following is some visualization on how gender affects showing up to an appointment. It shows that there are more women than men in the dataset (which implies that women see doctors more than men) and that gender makes no no real difference in whether or not a patient will show up to an appointment
+```{r}
+#There are more women in the dataset than men, which implies that women see doctors more than men. 
+#There does not seem to be a distinct difference in no show when it comes to gender. 
+ggplot(data, aes(x=Gender, fill=Gender)) + geom_bar(position="dodge")
+ggplot(data, aes(x=Gender, fill=No.show)) + geom_bar(position="fill")
+```
+The following checks how important certain features are to determining whether or not a patient will show up to the appointment or not. The biggest findings are that people are much more likely to miss the appointment if they have received a SMS reminder, which seems to be against what it should be doing. In addition, heavily handicapped patients are more likely to miss an appointment. 
+```{r}
+ggplot(data, aes(x=SMS_received, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Diabetes, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Alcoholism, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Hipertension, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Handcap, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Scholarship, fill=No.show)) + geom_bar(position="fill")
+```
+
+After visualization, the data was inputted into models to find a model with the best misclassiciation. Because of the size of the dataset, a few of the models take too long to run (10+ hours) so they have been commented out. 
+
+The first two models are the decision tree model and the random forest model: 
+
+The following block of code reads the data from the CSV file and inputs it into R so that analysis can be done. 
+
+```{r}
+medicalData <- read.csv("KaggleV2-May-2016.csv", header=TRUE, stringsAsFactors = FALSE)
+head(medicalData)
+
+
+#Removing the first two columns because they will not be useful towards calculating whether or not a patient shows up
+medicalData <- medicalData[c(3:14)]
+
+#There are two many factors in Neighborhood, ScheduleDay, and AppointmentDay so I will try to simplify the data to enable the creation of the DecisionTree + Random Forests
+#unique(medicalData$Neighbourhood)
+
+#Fixes the age data because some ages are less than 0 which makes no sense.
+medicalData$Age[medicalData$Age < 0] <- 0
+
+#Th following creates a column for the number of days between the scheduling day and the appointment day
+medicalData$dateDiff <- as.Date(as.character(medicalData$AppointmentDay, "%Y, %m, %d")) - as.Date(as.character(medicalData$ScheduledDay, "%Y, %m, %d"))
+medicalData$dateDiff[medicalData$dateDiff >= 50] <- "Other"
+medicalData$dateDiff[medicalData$dateDiff < 0] <- 0
+print(unique(medicalData$dateDiff))
+
+#The following code breaks the datetime data into just the day and will be used instead
+medicalData$ScheduledDay <- weekdays(as.Date(medicalData$ScheduledDay))
+medicalData$AppointmentDay <- weekdays(as.Date(medicalData$AppointmentDay))
+
+#To create less factors for Neighborhood, I will condense the data by grouping non-frequent data entries into an "Other" category.
+toCondense <- names(which(prop.table(table(medicalData$Neighbourhood)) < .01))
+medicalData$Neighbourhood[medicalData$Neighbourhood %in% toCondense] <- "Other"
+
+
+head(medicalData)
+#The number of factors in Neighborhood has been reduced to an acceptable amount to be able to run a deceision tree model
+unique(medicalData$Neighbourhood)
+
+```
+
+The following bundle of code seperates the data into training and testing sets because we were not given any test/training data - just one big dataset
+
+```{r}
+num_samples = dim(medicalData)[1]
+sampling.rate = 0.8
+
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(medicalData[training, ])
+
+testing <- setdiff(1:num_samples, training)
+testingSet <- subset(medicalData[testing, ])
+```
+
+```{r}
+library(rpart)
+#Strangely, creating a decTreeModel returns the error "fit is not a tree, just a root". Googling this says that the model is not able to find anything to map.
+#decTreeModel <- rpart(No.show ~ Gender + ScheduledDay + AppointmentDay + Age + Scholarship + Hipertension + Diabetes + Alcoholism + Handcap + SMS_received, data = trainingSet)
+#I will make the table overfit to see if it is able to create a decision tree model and then prune it with cp
+#I pruned it with cp = 0.0001 because the lower the cp, the higher the error was. However, if I lower cp too much then there will be no tree
+decTreeModel <- rpart(No.show ~., data = trainingSet, control = rpart.control(minsplit = 1, minbucket = 1, cp=.0001))
+#plotcp(decTreeModel)
+plot(decTreeModel, margin=0.1)
+text(decTreeModel)
+```
+
+```{r}
+#The following code is used to calculate the error rate of the decTreeModel
+sizeTestSet = dim(testingSet)[1]
+decTreePredictions <- predict(decTreeModel, testingSet, type="class")
+decTreeError <- sum(decTreePredictions!=testingSet$No.show)
+decTreeMisclassification = decTreeError/sizeTestSet
+print(decTreeMisclassification)
+```
+
+```{r}
+#Calculate the average error to remove the variability of creating the testing and training set
+decTreeAllErrors=c()
+
+for(fold in 1:10){
+  num_samples = dim(medicalData)[1]
+  sampling.rate = 0.8
+
+  training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+  trainingSet <- subset(medicalData[training, ])
+
+  testing <- setdiff(1:num_samples, training)
+  testingSet <- subset(medicalData[testing, ])
+  
+  decTreeModel <- rpart(No.show ~., data = trainingSet, control = rpart.control(minsplit = 1, minbucket = 1, cp=.0001))
+  
+  sizeTestSet = dim(testingSet)[1]
+  decTreePredictions <- predict(decTreeModel, testingSet, type="class")
+  decTreeError <- sum(decTreePredictions!=testingSet$No.show)
+  decTreeMisclassification = decTreeError/sizeTestSet
+  decTreeAllErrors[fold]=decTreeMisclassification
+}
+#The average of all the errors
+print(mean(decTreeAllErrors))
+
+```
+
+```{r}
+library(randomForest)
+
+trainingSet$Age <-cut(trainingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+testingSet$Age <-cut(testingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+#First convert all the data into factors so that the randomForest model can be generated
+for(i in names(trainingSet)){
+  trainingSet[[i]]=factor(trainingSet[[i]])
+}
+for(i in names(testingSet)){
+  testingSet[[i]]=factor(testingSet[[i]])
+}
+
+#Have to add this or else the randomForest thinks the training and testing set have different factors
+for(i in names(testingSet)){
+  levels(testingSet[[i]]) <- levels(trainingSet[[i]])
+}
+# trainingSet$Gender = factor(trainingSet$Gender)
+# trainingSet$AppointmentDay = factor(trainingSet$AppointmentDay)
+# trainingSet$ScheduledDay = factor(trainingSet$ScheduledDay)
+# trainingSet$Neighbourhood = factor(trainingSet$Neighbourhood)
+# trainingSet$Age <-cut(trainingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+# testingSet$Gender = factor(testingSet$Gender)
+# testingSet$AppointmentDay = factor(testingSet$AppointmentDay)
+# testingSet$ScheduledDay = factor(testingSet$ScheduledDay)
+# testingSet$Neighbourhood = factor(testingSet$Neighbourhood)
+# testingSet$Age <-cut(testingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+
+```
+
+```{r}
+#The error does not look like it declindes at all so I will prune the number of trees to 50 (as there is a VERY small decline in error)
+#ranForestModel <- randomForest(No.show ~., data = trainingSet)
+ranForestModel <- randomForest(No.show ~., data = trainingSet, ntree = 50)
+plot(ranForestModel)
+```
+
+```{r}
+ranForestPredictions <- predict(ranForestModel, testingSet, type="class")
+ranForestError <- sum(ranForestPredictions!=testingSet$No.show)
+ranForestMisclassification = ranForestError/sizeTestSet
+print(ranForestMisclassification)
+```
+
+```{r}
+#Calculate the average error to remove the variability of creating the testing and training set
+ranForestAllErrors=c()
+
+for(fold in 1:10){
+  num_samples = dim(medicalData)[1]
+  sampling.rate = 0.8
+
+  training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+  trainingSet <- subset(medicalData[training, ])
+
+  testing <- setdiff(1:num_samples, training)
+  testingSet <- subset(medicalData[testing, ])
+  
+  trainingSet$Age <-cut(trainingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+  testingSet$Age <-cut(testingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+  
+  for(i in names(trainingSet)){
+    trainingSet[[i]]=factor(trainingSet[[i]])
+  }
+  for(i in names(testingSet)){
+    testingSet[[i]]=factor(testingSet[[i]])
+  }
+  for(i in names(testingSet)){
+    levels(testingSet[[i]]) <- levels(trainingSet[[i]])
+  }
+  
+  ranForestModel <- randomForest(No.show ~., data = trainingSet, ntree = 50)
+  
+  sizeTestSet = dim(testingSet)[1]
+  ranForestPredictions <- predict(ranForestModel, testingSet, type="class")
+  ranForestError <- sum(ranForestPredictions!=testingSet$No.show)
+  ranForestMisclassification = ranForestError/sizeTestSet
+  ranForestAllErrors[fold]=ranForestMisclassification
+}
+#The average of all the errors
+print(mean(ranForestAllErrors))
+
+```
+
+A summary of the overall findings of the decision tree vs. random forest models is that the random forest model gives a little bit lower of a misclassification rate. In addition, it also has the benefit of being less prone to overfitting than the decision tree, which is a big plus in this case because we had to allow the decision tree model to overfit in order to even generate a model. Therefore, all things considered, the random forest model is superior to the decision tree model for this data. 
+
+The next model is the logistic regression, which offered the best misclassification rate out of all the models:
+
+```{r}
+hospital<-read.csv("KaggleV2-May-2016.csv",header=T)
+names(hospital)
+head(hospital)
+```
+```{r}
+# Clean the data
+# Delete Ids since it shouldn't be related to the attendence
+hospital$PatientId<-NULL
+hospital$AppointmentID<-NULL
+
+#Fixes the age data because some ages are less than 0 which makes no sense.
+hospital$Age[hospital$Age < 0] <- 0
+```
+```{r}
+# Convert character into numeric values
+hospital$No.show<- as.character(hospital$No.show)
+hospital$No.show[hospital$No.show=='Yes'] =1
+hospital$No.show[hospital$No.show=='No'] = 0
+hospital$No.show <- as.numeric(hospital$No.show)
+hospital$Gender<- as.character(hospital$Gender)
+hospital$Gender[hospital$Gender=='F'] =1
+hospital$Gender[hospital$Gender=='M'] = 0
+hospital$Gender <- as.numeric(hospital$Gender)
+head(hospital)
+```
+```{r}
+# Covert Categorical features into dummy variables
+library(lattice)
+library(ggplot2)
+library(caret)
+dummy <- dummyVars(~+Neighbourhood, data = hospital, levelsOnly = TRUE)
+Hospital <- data.frame(predict(dummy, hospital))
+head(Hospital)
+```
+```{r}
+# Merge the data into the original dataset
+appointment <- cbind(hospital, Hospital)
+# Delete the duplicate variable
+appointment$Neighbourhood<-NULL
+head(appointment)
+```
+
+```{r}
+ScheduledDate <- do.call('rbind', strsplit(as.character(appointment$ScheduledDay),'T',fixed=TRUE))
+AppointmentDate <- do.call('rbind', strsplit(as.character(appointment$AppointmentDay),'T',fixed=TRUE))
+ScheduledDate <- ScheduledDate[ ,1]
+AppointmentDate <- AppointmentDate[ ,1]
+head(ScheduledDate)
+head(AppointmentDate)
+```
+```{r}
+Time_Diff<- as.Date(as.character(appointment$AppointmentDay)) - as.Date(as.character(appointment$ScheduledDay))
+appointment <- cbind(appointment, Time_Diff)
+head(appointment)
+```
+```{r}
+# Delete the duplicate
+appointment$AppointmentDay<-NULL
+appointment$ScheduledDay<-NULL
+head(appointment)
+```
+```{r}
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+
+
+```{r}
+# Delete variables from the largest P-value
+appointment$PONTAL.DE.CAMBURI<-NULL
+appointment$DO.QUADRO<-NULL
+appointment$SEGURANÇA.DO.LAR<-NULL
+appointment$DE.LOURDES<-NULL
+appointment$SANTA.MARTHA<-NULL
+appointment$ILHAS.OCEÂNICAS.DE.TRINDADE<-NULL
+appointment$VILA.RUBIM<-NULL
+appointment$JABOUR<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$ILHA.DO.BOI<-NULL
+appointment$AEROPORTO<-NULL
+appointment$Gender<-NULL
+appointment$MONTE.BELO<-NULL
+appointment$FRADINHOS<-NULL
+appointment$ANTÔNIO.HONÓRIO<-NULL
+appointment$Handcap<-NULL
+appointment$MORADA.DE.CAMBURI<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+
+```{r}
+# Delete variables from the largest P-value
+appointment$NAZARETH<-NULL
+appointment$JUCUTUQUARA<-NULL
+appointment$ILHA.DO.FRADE<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$JARDIM.DA.PENHA<-NULL
+appointment$DO.CABRAL<-NULL
+appointment$JOANA.D.ARC<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$MÁRIO.CYPRESTE<-NULL
+appointment$FONTE.GRANDE<-NULL
+appointment$BOA.VISTA<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$SANTA.LUÍZA<-NULL
+appointment$MATA.DA.PRAIA<-NULL
+appointment$COMDUSA<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$PIEDADE<-NULL
+appointment$REPÚBLICA<-NULL
+appointment$ILHA.DE.SANTA.MARIA<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$PARQUE.INDUSTRIAL<-NULL
+appointment$CONSOLAÇÃO<-NULL
+appointment$SANTA.HELENA<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$REDENÇÃO<-NULL
+appointment$UNIVERSITÁRIO <-NULL
+appointment$TABUAZEIRO<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$SOLON.BORGES<-NULL
+appointment$SANTA.TEREZA <-NULL
+appointment$CONQUISTA<-NULL
+appointment$SÃO.CRISTÓVÃO<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+
+```{r}
+# Delete variables from the largest P-value
+appointment$RESISTÊNCIA<-NULL
+appointment$FORTE.SÃO.JOÃO<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+
+```{r}
+# Delete variables from the largest P-value
+appointment$SANTO.ANTÔNIO<-NULL
+appointment$GOIABEIRAS<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+
+
+```{r}
+# Delete variables from the largest P-value
+appointment$SANTA.LÚCIA<-NULL
+appointment$INHANGUETÁ<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$SANTOS.REIS<-NULL
+appointment$MARUÍPE<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$ENSEADA.DO.SUÁ<-NULL
+appointment$CRUZAMENTO<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$MARIA.ORTIZ<-NULL
+appointment$NOVA.PALESTINA<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$SANTA.CECÍLIA<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+```{r}
+# Delete variables from the largest P-value
+appointment$SÃO.BENEDITO<-NULL
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+summary(LogisticReg)
+```
+Looking at the summary, the variables with positive coefficients will increase the probability of patients not showing up on the appointment day. Most of them are intuitive, for example, as the time difference between the scheduled day and appointment day increase, the probability of missing the appointment increase. However, intuitively, people may think the "SMS_received" variable will decrease the likelihood of patients missing appointment but the summary shows the opposite. Without knowing how data was collected. It is suspected that this may due to the reason that SMS was only sent under request and people who ask for this service knows their habits of forgetting. There are also a lot of variables transformed from the original "Neighbourhood" variable that are statistically significant in predicting the result. This may due to the different distances. However, the conversion is hard to accomplish without knowing the address of the office. If this measure can be converted, this model may be used in a broader range if proving useful.
+```{r}
+dim(appointment)
+```
+# K-Fold Cross Validation Let us do a 50-Fold Cross Validation (Average error over 50 different test sets)
+```{r}
+#initialize a vectore to store all the errors
+AllErrors=c()
+FalseNo=c()
+FalseYes=c()
+for(fold in 1:50)
+  {
+#Get Training at Testing sets
+training <- sample(1:num_samples, sampling.rate * num_samples, replace=FALSE)
+trainingSet <- subset(appointment[training, ])
+testing <- setdiff(1:num_samples,training)
+testingSet <- subset(appointment[testing, ])
+# Get the features of the training set
+trainingfeatures <- subset(trainingSet, select=c(-No.show))
+# Get the labels of the training set
+traininglabels <- trainingSet$No.show
+# Get the features of the testing set
+LogisticReg <- glm(No.show ~., data = appointment, family = binomial(logit),maxit = 100)
+#Calculate the error
+predictions <-predict(LogisticReg, testingSet, type = "response")
+predictedLabels <- round(predictions)
+#We compute the misclassification rate (the rate of incorrect predictions).
+# Get the number of data points in the test set
+sizeTestSet = dim(testingSet)[1]
+# Get the number of data points that are misclassified
+# Calculate the misclassification rate
+misclassification_rate = error/sizeTestSet
+error = sum(predictedLabels != testingSet$No.show)
+AllErrors[fold] = misclassification_rate
+
+# Get the number of data points in the test set
+sizeTestSet1 = dim(testingSet)[1]
+# Get the data points that are misclassified
+ISWrong = (predictedLabels != testingSet$No.show)
+# Get the data points that are classified as Noshow(0)
+Noshow = (predictedLabels == '0')
+# Get the data points that are misclassified and are classified as no show
+IsWrongNoshow = (ISWrong & Noshow)
+error1 = sum(IsWrongNoshow)
+# Calculate the misclassification rate
+FalseNoShow_rate = error1/sizeTestSet1
+FalseNo[fold] = FalseNoShow_rate
+
+# Get the data points that are classified as Yesshow(1)
+Yesshow = (predictedLabels == '1')
+# Get the data points that are misclassified and are classified as no show
+IsWrongYesshow = (ISWrong & Yesshow)
+error2 = sum(IsWrongYesshow)
+# Calculate the misclassification rate
+FalseYes_rate = error2/sizeTestSet1
+FalseYes[fold] = FalseYes_rate}
+```
+```{r}
+FalseNo = mean(FalseNo)
+FalseNo
+FalseYes = mean(FalseYes)
+FalseYes
+AverageError = mean(AllErrors)
+AverageError
+```
+The false positive rate is much lower than the false negative rate. It suggests that if the model predict a patient not to show up, there is only less than 2% chance that patient will actually show up.This model can be utilized by the hospital in a lot of ways. For example, they can send SMS to patients who are predicted to missing the appointment multiple times and call in to confirm the appointment.
+
+
+We then tried to use a KNN model, although we recognize that it is probably not the best model as the model does not fit with our dataset. Below is the commented out code both because lack of fit and because it takes too long to run (6 hours)
+
+# ```{r}
+# # read csv into R
+# Appointment <- read.csv("/Users/LunaZ/Documents/HBA2/Data Science/Appointment Data.csv", header = TRUE)
+# # display the first few element to make sure the data is read
+# head(Appointment)
+# ```
+# ```{r}
+# dim(Appointment)
+# ```
+# There are 110527 data points and 14 features in this dataset.
+# ```{r}
+# #check if there is missing value in this data set
+# Appointment[!complete.cases(Appointment),]
+# ```
+# The result shows there is no missing data points, so the models that will be built will not be influenced by missing datas. 
+# 
+# In order to fully see the impact of the appointment time, a few new variables will be added to specify the weekdays, month and hours of the appointment.
+# ```{r}
+# Appointment$weekday <- weekdays(as.Date(Appointment$AppointmentDay))
+# ScheduledDate <- do.call('rbind', strsplit(as.character(Appointment$ScheduledDay),'T',fixed=TRUE))
+# AppointmentDate <- do.call('rbind', strsplit(as.character(Appointment$AppointmentDay),'T',fixed=TRUE))
+# ScheduledDate <- ScheduledDate[ ,1]
+# AppointmentDate <- AppointmentDate[ ,1]
+# head(ScheduledDate)
+# head(AppointmentDate)
+# ```
+# ```{r}
+# Appointment$appmonth <- format(as.Date(AppointmentDate, format="%Y-%m-%d"),"%m")
+# Appointment$schmonth <- format(as.Date(ScheduledDate, format="%Y-%m-%d"),"%m")
+# 
+# head(Appointment)
+# ```
+# The goal of this project is to analyse the relationship between show/no show and other factors, such as appointment date, SMS_received and age. Then, make a recommendation to the hospital about time and staff management.
+# 
+# ```{r}
+# names(Appointment)
+# dim(Appointment)
+# ```
+# 
+# ```{r}
+# #remove irrelevant data, such as ID
+# Appointment$AppointmentID <- NULL
+# Appointment$PatientId <- NULL
+# Appointment$ScheduledDay <- NULL
+# Appointment$AppointmentDay <- NULL
+# Appointment$Gender <- NULL
+# Appointment$Neighbourhood <-NULL
+# Appointment$weekday <- NULL
+# head(Appointment)
+# ```
+# Fit a KNN model using the training set
+# ```{r}
+# # normalize the data
+# for (colName in names(Appointment)) {
+# 
+#     # Check if the column contains numeric data.
+#     if(class(Appointment[,colName]) == 'integer' | class(Appointment[,colName]) == 'numeric') {
+# 
+#         # Scale this column (scale() function applies z-scaling).
+#           Appointment[,colName] <- scale(Appointment[,colName])
+#         }
+# }
+# head(Appointment)
+# ```
+# Due to the large number of data points, a 0.6 sampling rate will be used.
+# ```{r}
+# # Create Training and Testing Sets
+# num_samples = dim(Appointment)[1]
+# sampling.rate = 0.6
+# training <- sample(1:num_samples, sampling.rate * num_samples, replace=FALSE)
+# trainingSet <- Appointment[training, ]
+# testing <- setdiff(1:num_samples,training)
+# testingSet <- Appointment[testing, ]
+# ```
+# ```{r}
+# # Get the features of the training set
+# trainingfeatures <- subset(trainingSet, select=c(-No.show))
+# # Get the labels of the training set
+# traininglabels <- trainingSet$No.show
+# # Get the features of the testing set
+# testingfeatures <- subset(testingSet, select=c(-No.show))
+# ```
+# ```{r}
+# # Load the classification library
+# library(class)
+# ```
+# ```{r}
+# dim(trainingSet)
+# ```
+# Due to the large numbers of data point, we will only try k value between 1 to 100 to find the best K value.
+# ```{r}
+# # tips:this model takes several hours to run
+# currentBestError = Inf
+# for(i in 1:100) {
+#   
+#   # Generate the formula
+#   predictedLabels = knn(trainingfeatures,testingfeatures,traininglabels,k=i)
+#   
+#   # Calculate the error as the difference between the prediction and the actual
+#   
+#   error = sum(predictedLabels != testingSet$No.show)
+# 
+#   # Update the best model when a etter alternative is found
+#   if(error < currentBestError){
+#     print(paste0("We found a better K Value: ", print(i) ))
+#     currentBestError = error #update the best error to the new one
+#   }
+# }
+# ```
+# Between 1 to 100, 82 is the best K value in the KNN model.
+# ```{r}
+# # Get the number of data points in the test set
+# sizeTestSet = dim(testingSet)[1]
+# # Calculate the misclassification rate
+# misclassification_rate = error/sizeTestSet
+# # Display the misclassification rate
+# print(misclassification_rate)
+# table(Actual=testingSet$No.show,predictedLabels)
+# ```
+# The misclassification rate is 20%, although it is not significant better or worse than the other models we built. This is not very suitable because the KNN model did not consider categorical features, such as gender and neighborhood. It's not the best model.
+# Among the predicted results, 8936 patiences that did not showed up are predicted to show up. The misclassification is skewed to false positive may due to the nature of the data set. There is a big chance that the survey collects more data points of "show".
+# ```{r}
+# # read csv into R
+# Appointment <- read.csv("/Users/LunaZ/Documents/HBA2/Data Science/Appointment Data.csv", header = TRUE)
+# # display the first few element to make sure the data is read
+# head(Appointment)
+# ```
+# 
+# 
+# ```{r}
+# Appointment$Gender <- as.factor(Appointment$Gender)
+# Appointment$Neighbourhood <- as.factor(Appointment$Neighbourhood)
+# # assign a numeric value for the appointment staus, assume "1" represents "show" and "0" represents "noshow"
+# Appointment$status <- Appointment$No.show
+# Appointment$status <- as.character(Appointment$status)
+# for (i in 1:1110){
+#     if(Appointment$status[i] == "Yes")
+#     {
+#         Appointment$status[i]="1"
+#     }
+#   if(Appointment$status[i] == "No")
+#     {
+#         Appointment$status[i]="0"
+#     }
+# }
+# head(Appointment)
+# ```
+# 
+# ```{r}
+# plot(Appointment$status)
+# ```
+
+From the data plot, we can see there is no linear relationship between the dependent variables(show/no show) with other independant variables. Thus, we will not use linear regression to predict the outcome.
+
+After, we tested both a SVM model and a neural network to see if it would create a better misclassification rate. The SVM model is commented out because it takes 12+ hours to run, but the neural network does not take as long so it is kept. 
+
+```{r}
+library(caret)
+```
+
+
+```{r}
+#In this section we will use support vector machines and neural networks to predict
+AppointData <- read.csv("D:/Google Drive/Data Science Project/KaggleV2-May-2016.csv",header=TRUE)
+
+head(AppointData)
+```
+
+
+
+```{r}
+str(AppointData)
+```
+
+
+```{r}
+#Creating another column where the difference in the days between the day scheduled and actual date of the appointment
+AppointData$Datediff <- as.Date(as.character(AppointData$AppointmentDay)) - as.Date(as.character(AppointData$ScheduledDay))
+
+#Making sure that when we subtract the days there aren't any negative days in difference 
+AppointData$dateDiff <- as.numeric(AppointData$dateDiff)
+AppointData$dateDiff[AppointData$dateDiff<0] <- 0
+
+
+```
+
+
+
+
+```{r}
+
+#Breaking down the column appointment day into two columns of the weekday and then month 
+appointday <- weekdays(as.Date(AppointData$AppointmentDay))
+AppointData$AppointmentWeekDay <- as.factor(appointday)
+
+#
+AppointData$AppointmentMonth <- as.POSIXlt(AppointData$AppointmentDay)$mon
+AppointData$AppointmentMonth <- as.factor(AppointData$AppointmentMonth)
+
+head(AppointData)
+```
+
+```{r}
+#Breaking down the scheduled appointment day into two columns of the weekday and then month 
+scheduleday <- weekdays(as.Date(AppointData$AppointmentDay))
+AppointData$AppointmentScheduleDay <- as.factor(scheduleday)
+
+AppointData$AppointmentScheduleMonth <- as.POSIXlt(AppointData$AppointmentDay)$mon
+AppointData$AppointmentScheduleMonth <- as.factor(AppointData$AppointmentMonth)
+
+head(AppointData)
+```
+
+
+```{r}
+#Removing the variables that don't provide any information such as patient ID and appointment ID, and removing the original appoint day and schedule day variables
+AppointData$PatientId <- NULL
+AppointData$AppointmentID <- NULL
+AppointData$ScheduledDay <- NULL
+AppointData$AppointmentDay <- NULL
+
+head(AppointData)
+```
+
+
+```{r}
+str(AppointData)
+```
+
+
+```{r}
+#Making sure the varaibles are all numeric for the SVM later on and the neural network
+AppointData$Gender <- as.numeric(AppointData$Gender)
+AppointData$Neighbourhood <- as.numeric(AppointData$Neighbourhood)
+AppointData$AppointmentWeekDay <- as.numeric(AppointData$AppointmentWeekDay)
+AppointData$AppointmentMonth <- as.numeric(AppointData$AppointmentMonth)
+AppointData$AppointmentScheduleDay <- as.numeric(AppointData$AppointmentScheduleDay)
+AppointData$AppointmentScheduleMonth <- as.numeric(AppointData$AppointmentScheduleMonth)
+AppointData$Datediff <- as.numeric(AppointData$Datediff)
+
+head(AppointData)
+```
+
+
+```{r}
+dim(AppointData)
+```
+
+
+```{r}
+#Re arranging the coulmns so the predictive variable is at the end.
+AppointData <- AppointData[,c(1:9,11:15,10)]
+
+head(AppointData)
+```
+
+```{r}
+AppointData[2]
+```
+
+
+```{r}
+
+#Normalzing the data 
+
+for (i in 1:14) {
+  
+  AppointData[i] <- scale((AppointData[i]), center = TRUE, scale = TRUE)
+  
+}
+```
+
+
+
+
+```{r}
+#Creating both the training and tesing set of the data
+num_samples = dim(AppointData)[1]
+sampling.rate = 0.8
+training <- sample(1:num_samples, sampling.rate * num_samples,replace=FALSE)
+trainingSet <- AppointData[training,]
+testing <- setdiff(1:num_samples,training)
+testingSet <- AppointData[testing,]
+```
+
+# ```{r}
+# library(e1071)
+# ```
+# 
+# ```{r}
+# #Training the model using SVM using linear
+# svmModel <- svm(No.show~., data=trainingSet,kernel = "linear", cost = 100)
+# ```
+# 
+# ```{r}
+# #predicting the results with the trained linear SVM
+# predictedlabels <- predict(svmModel, testingSet)
+# ```
+# 
+# ```{r}
+# confusionMatrix(testingSet$No.show,predictedlabels)
+# 
+# ```
+# 
+# 
+# ```{r}
+# #Training the model using SVM radial, takes a very long time
+# svmModelradial <- svm(No.show~., data=trainingSet,kernel = "radial", cost = 100)
+# ```
+# 
+# ```{r}
+# #Predicitng the results using SVM radial, takes a very long time
+# predictedlabels2 <- predict(svmModelradial, testingSet)
+# ```
+# 
+# ```{r}
+# confusionMatrix(testingSet$No.show,predictedlabels2)
+# ```
+# 
+# 
+# ```{r}
+# #Training the model with SVM polynomial, takes a very long time
+# svmModelpolynomial <- svm(No.show~., data=trainingSet,kernel = "polynomial ", cost = 100)
+# ```
+# 
+# ```{r}
+# #Predicting the labels with SVM polynomial
+# predictedlabels3 <- predict(svmModelpolynomial, testingSet)
+# ```
+# 
+# ```{r}
+# confusionMatrix(testingSet$No.show,predictedlabels3)
+# 
+# ```
+
+
+From all our results with the three different SVM models, we see that their results are all still very similar. There isn't any improvement between the three models. There is a challenge with the data as you have both categorical and numeric data, which affects the distance calculation used in SVM . For example, we have age and then we have binary numbers which then puts more emphasis on age. The biggest limitation is that we are unable to tune the model and try other costs as the model takes a significant amount of time to train. 
+
+
+```{r}
+library(neuralnet)
+```
+
+
+```{r}
+#Creating the training and testing data
+num_samples = dim(AppointData)[1]
+sampling.rate = 0.8
+training <- sample(1:num_samples, sampling.rate * num_samples,replace=FALSE)
+trainingSet <- AppointData[training,]
+testing <- setdiff(1:num_samples,training)
+testingSet <- AppointData[testing,]
+```
+
+
+```{r}
+#training the neural network with 2 hiddne layers with 7, 5 neurons respectively
+nnModel <- neuralnet(No.show ~Gender + Age + Neighbourhood + Scholarship + Hipertension + Diabetes + Alcoholism + Handcap + SMS_received + AppointmentWeekDay + AppointmentMonth + AppointmentScheduleDay + AppointmentScheduleMonth + Datediff,  data=trainingSet,hidden=c(7,5,4),linear.output=FALSE)
+```
+
+```{r}
+plot(nnModel)
+```
+
+```{r}
+predictedlabelsn <- compute(nnModel,testingSet[,1:14])
+
+predictedlabelsn <- round(predictedlabelsn$net.result)
+```
+
+```{r}
+sizetestset = dim(testingSet)[1]
+
+errorn = sum(predictedlabelsn != testingSet$No.show)
+
+misclassification_raten = error3/sizetestset  
+
+print(misclassification_raten)
+
+```
+
+Our neural network also had a accuracy of around 80%.
+
+Finally, we ran an ensemble model to see if a better misclassification could be achieved by combining models. Unfortunately, it took a very long time so the code will be commented out, but the findings are that it does not actually reduce the misclassification anymore. 
+
+# ```{r}
+# library(caret)
+# library(dplyr)
+# library(class)
+# library(corrplot)
+# library(doSNOW)
+# 
+# ```
+# 
+# 
+# 
+# ```{r}
+# # In this section we will attempt to create some ensemble models for our data
+# AppointData <- read.csv("C:/Users/Hiroshi Chakma/Google Drive/Data Science Project/KaggleV2-May-2016.csv",header=TRUE)
+# 
+# head(AppointData)
+# ```
+# 
+# ```{r}
+# 
+# 
+# #Finding the difference betwee the days of the scheduled day and appointment day
+# AppointData$dateDiff <- as.Date(as.character(AppointData$AppointmentDay, "%Y, %m, %d")) - as.Date(as.character(AppointData$ScheduledDay, "%Y, %m, %d"))
+# 
+# #Making sure that when we subtract the days there aren't any negative days in difference 
+# AppointData$dateDiff <- as.numeric(AppointData$dateDiff)
+# AppointData$dateDiff[AppointData$dateDiff<0] <- 0
+# 
+# AppointData$Age <- as.integer(AppointData$Age)
+# 
+# 
+# #Changing the scheduled/appointment times to the days of the week
+# AppointData$ScheduledDay <- weekdays(as.Date(AppointData$ScheduledDay))
+# AppointData$AppointmentDay <- weekdays(as.Date(AppointData$AppointmentDay))
+# 
+# AppointData$ScheduledDay <- as.factor(AppointData$ScheduledDay)
+# AppointData$AppointmentDay <- as.factor(AppointData$AppointmentDay)
+# 
+# #Rearranging the columns to have the no show column at the end
+# AppointData <- AppointData[c(3:13,15,14)]
+# 
+# head(AppointData)
+# ```
+# 
+# 
+# 
+# 
+# ```{r}
+# str(AppointData)
+# 
+# #Check if there is missing data points
+# sum(is.na(AppointData))
+# ```
+# 
+# 
+# 
+# ```{r}
+# 
+# #We are creating dummy variables for the columns shown before, so we can have less factors, but more varibles to fit our models. This will split the data in 0 or 1 for each factor in these. For example, Monday will be a column with a zero or one, Tuesday will follow the same and etc. 
+# AppointDataDummy <- AppointData
+# dmy <- dummyVars("~ Gender + ScheduledDay +AppointmentDay+ Neighbourhood", data= AppointDataDummy)
+# AppointDataDummy <- data.frame(predict(dmy, newdata = AppointDataDummy))
+# ```
+# 
+# ```{r}
+# 
+# #Combining the dummy variable columns that have been created to the original data set
+# AppointDataDummy <-bind_cols(AppointData,AppointDataDummy)
+# 
+# dim(AppointDataDummy)
+# ```
+# 
+# ```{r}
+# 
+# # Removing the columns that repeat due to the dummy variables that we added, making sure our variables are the right class
+# AppointDataDummy$Gender <- NULL
+# AppointDataDummy$ScheduledDay <- NULL
+# AppointDataDummy$AppointmentDay <- NULL
+# AppointDataDummy$Neighbourhood <- NULL
+# AppointDataDummy$Gender.M <- NULL
+# AppointDataDummy$No.show <- NULL
+# 
+# AppointDataDummy$No.show <- AppointData$No.show
+# 
+# AppointDataDummy$Age <- as.numeric(AppointDataDummy$Age)
+# 
+# head(AppointDataDummy)
+# ```
+# 
+# 
+# ```{r}
+# #Creating a training and testing set using the functions of the caret package. 
+# 
+# index <- createDataPartition(AppointDataDummy$No.show, p=0.8,list=FALSE)
+# 
+# trainingSet <- AppointDataDummy[index,]
+# 
+# testingSet <- AppointDataDummy[-index,]
+# ```
+# 
+# 
+# ```{r}
+# 
+# #Setting up 5 k fold validation parameters, also want to store the probabilities and allow parallel computing. This is the parametes we will use for all our models
+# fitControl <- trainControl( method ="cv", number = 5,savePrediction = 'final',classProbs = T, allowParallel = TRUE)
+# 
+# #Defining the predictor and outcome variables 
+# 
+# predictors <- colnames(AppointDataDummy)[1:102]
+# 
+# 
+# 
+# outcomeName <- colnames(AppointDataDummy)[103]
+# 
+# 
+# ```
+# 
+# 
+# ```{r}
+# #Training the model for the random forest model using the parameters that we have done in the previous code. This might take a couple of hours to complete
+# model_rf <- train(trainingSet[,predictors],trainingSet[,outcomeName], method='rf', trControl = fitControl)
+# 
+# #Predicting using the trained random forest model using the testing set
+# testingSet$pred_rf <- predict(object = model_rf, testingSet[,predictors])
+# 
+# #Using the confusion matrix to see the results of our prediction
+# confusionMatrix(testingSet$No.show,testingSet$pred_rf)
+# ```
+# 
+# 
+# 
+# 
+# Right now the model has an accuracy 79.81%, which still isn't better than just assuming that everyone will show up to the appointments. 
+# 
+# 
+# 
+# ```{r}
+# plot(model_rf)
+# ```
+# 
+# 
+# We don't see a flat line for the error rate too prune the tree, so we don't prune the tree
+# 
+# 
+# 
+# ```{r}
+# #Training KNN Model, this model takes a long time to train the model
+# model_knn <- train(trainingSet[,predictors],trainingSet[,outcomeName], method ='knn', trControl=fitControl, tuneLength = 3)
+# 
+# #Predicting using knn model
+# testingSet$pred_knn <- predict(object = model_knn, testingSet[,predictors])
+# 
+# confusionMatrix(testingSet$No.show,testingSet$pred_knn)
+# 
+# summary(model_knn)
+# ```
+# 
+# The model produces the same accuracy at 78.8%. This model takes a very long time to train, so we were unable to tune the paramters of the model properly.
+# 
+# 
+# 
+# ```{r}
+# #Logistic Regression training, this model doesn't take as long to train.
+# model_lr <- train(trainingSet[,predictors], trainingSet[,outcomeName], method = "glm", trControl = fitControl,family = binomial(logit),tuneLength = 3)
+# 
+# #Predicting using the logistic regression
+# testingSet$pred_lr <- predict(object = model_lr, testingSet[,predictors])
+# 
+# confusionMatrix(testingSet$No.show,testingSet$pred_lr)
+# 
+# summary(model_lr)
+# ```
+# 
+# The model produces similar accuracy as the other two models of around 80%. However, this model had the shortest train time of the two
+# 
+# 
+# 
+# ```{r}
+# library(corrplot)
+# ```
+# 
+# 
+# ```{r}
+# #Majority Voting Method, making sure the the predictions are factors and are in Yes/No format
+# testingSet$pred_majority<-as.factor(ifelse(testingSet$pred_rf=='Yes' & testingSet$pred_knn=='Yes','Yes',ifelse(testingSet$pred_rf=='Yes' & testingSet$pred_lr=='Yes','Yes',ifelse(testingSet$pred_knn=='Yes' & testingSet$pred_lr=='Yes','Yes','No'))))
+# ```
+# 
+# ```{r}
+# #Matrix for majority voting method
+# confusionMatrix(testingSet$No.show,testingSet$pred_majority)
+# 
+# ```
+# 
+# Our majority voting method doesn't create any improvements over the individual models. 
+# 
+# 
+# ```{r}
+# #Lets create a stack of models with KNN, random forest and logistic regression as our three base models, then using GBM and logistic regression as our top models.
+# #Predicting the out of fold prediction probabilites for training data
+# trainingSet$OOF_pred_rf<-model_rf$pred$Yes[order(model_rf$pred$rowIndex)]
+# trainingSet$OOF_pred_knn<-model_knn$pred$Yes[order(model_knn$pred$rowIndex)]
+# trainingSet$OOF_pred_lr<-model_lr$pred$Yes[order(model_lr$pred$rowIndex)]
+# 
+# ```
+# 
+# 
+# 
+# ```{r}
+# #Predicting probabilities for the test data, the predictions might take some time for KNN
+# testingSet$OOF_pred_rf<-predict(model_rf,testingSet[predictors],type='prob')$Yes
+# testingSet$OOF_pred_knn<-predict(model_knn,testingSet[predictors],type='prob')$Yes
+# testingSet$OOF_pred_lr<-predict(model_lr,testingSet[predictors],type='prob')$Yes
+# ```
+# 
+# 
+# 
+# ```{r}
+# #Getting column numberse to create correlation plot later on with their predictions.
+# which( colnames(testingSet)=="OOF_pred_knn" )
+# which( colnames(testingSet)=="OOF_pred_rf" )
+# which( colnames(testingSet)=="OOF_pred_lr" )
+# 
+# 
+# ```
+# 
+# 
+# ```{r}
+# #checkig if there are any correlations between the models predictions
+# corrplot(cor(testingSet[,107:109]), method = "number")
+# 
+# ```
+# 
+# For ensemble models you should make sure that the results of the models you use are not corrleated. In this case we do some some correlation, so we moved forward to see what the results will be. Having correlated predictions will not help with a better prediction in ensembling as you'll get similar results as the individual models.
+# 
+# 
+# ```{r}
+# #Predictors for top layer models 
+# predictors_top<-c('OOF_pred_rf','OOF_pred_knn','OOF_pred_lr') 
+# 
+# #GBM as top layer model 
+# model_gbm<- 
+# train(trainingSet[,predictors_top],trainingSet[,outcomeName],method='gbm',trControl=fitControl,tuneLength=3)
+# ```
+# 
+# 
+# ```{r}
+# #Logistic regression as top layer model
+# model_glm<-
+# train(trainingSet[,predictors_top],trainingSet[,outcomeName],method='glm',trControl=fitControl,tuneLength=3)
+# ```
+# 
+# 
+# 
+# ```{r}
+# #predict using GBM top layer model
+# testingSet$gbm_stacked<-predict(model_gbm,testingSet[,predictors_top])
+# 
+# confusionMatrix(testingSet$No.show,testingSet$gbm_stacked)
+# 
+# ```
+# 
+# ```{r}
+# #predict using logictic regression top layer model
+# testingSet$glm_stacked<-predict(model_glm,testingSet[,predictors_top])
+# 
+# confusionMatrix(testingSet$No.show,testingSet$glm_stacked)
+# 
+# ```
+
+
+
+Comparing both ensemble models, there is no clear improvement in the model performance. The accuracy and misclassification rates are the same. In the end, our model is still no better that just assuming that everyone will show up to their appointments which is roughly 80% of patientse will show up. We believe that there are two main issues at hand to explain the performance of our models. The first being, that the data itself is heavily skewed towards people people showing up, and there's not enough data on people who don't show up to traing the models properly. Maybe trying a biased sampling technique to help our models might improve our performance. The second issue is that many of the models take a singificant amount of time to train, up to a couple of hours. This really limited our ability to tune the models to get the best/optimal performance. So when we ensemble models with such similar results it doesn't really create a better predictive model that we would have hoped for. If we had more time to tune the models, this might have created a better possible single model or combined ensemble model.
+
+The final issue would be the selection of models for ensembling. Trying out different combinations of models would be key in creating a better predictive model. This would take a lot of experimenting and the art of selecting the right models.
+
+In the end, we decided that the logistic regression model, although not as complex as neural networks or an ensemble model, is the best predictor both because it has the lowest misclassification rate and because the logistic regression is a perfect fit for what we are trying to predict - a yes or no answer based on the features. In addition, the logistic regression model runs in an acceptable amount of time unlike many of the other models.

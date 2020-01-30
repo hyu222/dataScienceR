@@ -1,0 +1,164 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+PART 1
+
+```{r}
+creditData = read.csv("company_credit_rating_dataset.csv", header = TRUE, stringsAsFactors = FALSE)
+head(creditData)
+
+
+#The following for loop changes all of the ratings to A, B, and C to simplify the categorization process. 
+for (i in 1:nrow(creditData)){
+	if(creditData$RATING[i] == "AA+")
+	{
+		creditData$RATING[i]="A"
+	}
+  else if(creditData$RATING[i] == "AA-"){
+    creditData$RATING[i]="A"
+  }
+  else if(creditData$RATING[i] == "A+"){
+    creditData$RATING[i]="A"
+  }
+  else if(creditData$RATING[i] == "A-"){
+    creditData$RATING[i]="A"
+  }
+  else if(creditData$RATING[i] == "BBB+"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "BBB"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "BBB-"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "BB+"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "BB-"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "B+"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "B-"){
+    creditData$RATING[i]="B"
+  }
+  else if(creditData$RATING[i] == "CCC+"){
+    creditData$RATING[i]="C"
+  }
+  else{}
+}
+#The following normalizes the data
+for(i in names(creditData)){
+  if(class(creditData[, i]) == "numeric"){
+    creditData[, i] <-scale(creditData[, i])
+  }
+}
+head(creditData)
+
+#Creating the testing and training sets
+num_samples = dim(creditData)[1]
+sampling.rate = 0.8
+
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(creditData[training, ])
+
+testing <- setdiff(1:num_samples,training)
+testingSet <- subset(creditData[testing, ])
+
+#Seperate features from the labels
+trainingFeatures <- subset(trainingSet, select=c(-RATING))
+trainingLabels <- trainingSet$RATING
+testingFeatures <- subset(testingSet, select=c(-RATING))
+
+
+#KNN with k from 1 to 20
+#Stores the lowest error rate in lowestError
+library(class)
+lowestError = 1
+for(i in 1:20){
+  predictedLabels = knn(trainingFeatures, testingFeatures, trainingLabels, k = i)  
+  sizeTestSet = dim(testingSet)[1]
+  error = sum(predictedLabels != testingSet$RATING)
+  misclassificationRate = error/sizeTestSet
+  print(i)
+  print(misclassificationRate)
+  if(misclassificationRate < lowestError){
+    lowestError = misclassificationRate
+  }
+}
+
+#The error rate seems to increase as you iterate through k which makes sense because the lower k is, the more it will fit to the data. Overfitting will lead to a lower misclassification rate in this specific example, but will hurt results if we were to try this on real world data. 
+print(lowestError)
+```
+
+PART 2
+
+```{r}
+#50% chance that the company rating will change to any value at random.
+for (i in 1:nrow(creditData)){
+  changeValue = runif(1,0,1) #Creates a random number between 0 and 1
+  if(changeValue < 0.5){ #The 50% chance that the value will change
+    chooseValue = runif(1,0,1.5)
+    if(chooseValue < 0.5 ){
+      creditData$RATING[i]="A"
+    }
+    else if(chooseValue < 1.0){
+      creditData$RATING[i]="B"
+    }
+    else{
+      creditData$RATING[i]="C"
+    }
+    
+  }
+  
+}
+
+#Creating the testing and training sets
+num_samples = dim(creditData)[1]
+sampling.rate = 0.8
+
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(creditData[training, ])
+
+testing <- setdiff(1:num_samples,training)
+testingSet <- subset(creditData[testing, ])
+
+#Seperate features from the labels
+trainingFeatures <- subset(trainingSet, select=c(-RATING))
+trainingLabels <- trainingSet$RATING
+testingFeatures <- subset(testingSet, select=c(-RATING))
+
+#KNN with k from 1 to 20
+#Stores the lowest error rate in lowestError
+lowestError = 1
+for(i in 1:20){
+  predictedLabels = knn(trainingFeatures, testingFeatures, trainingLabels, k = i)  
+  sizeTestSet = dim(testingSet)[1]
+  error = sum(predictedLabels != testingSet$RATING)
+  misclassificationRate = error/sizeTestSet
+  print(i)
+  print(misclassificationRate)
+  if(misclassificationRate < lowestError){
+    lowestError = misclassificationRate
+  }
+}
+
+#The error rate is no longer the smallest when k = 1 because we have introduced outliers to the data set. A k value of 1 will overfit model (it worked well before because the data was taken from the same place) and this is made apparent by making the data different (making it more like real world data). 
+print(lowestError)
+
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

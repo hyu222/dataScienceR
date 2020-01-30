@@ -1,0 +1,187 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+AdData = read.csv("advertising.csv", header = TRUE)
+head(AdData)
+```
+
+2. The function names() will show everything that is stored in R under that object name. When used on the advertising data, we get the names of the columns which are the vectors that comprise the dataframe. 
+
+```{r}
+names(AdData)
+```
+
+3. The following line of code concatenates everything that is inputted into a String or Character vector. 
+```{r}
+eq <- paste(names(AdData[1]), " ~ ", names(AdData[2]), " + ", names(AdData[3]))
+eq
+```
+
+```{r}
+#Moves the sales column to be the first column in the dataset
+AdData = AdData[,c(4, 1:3)]
+names(AdData)
+```
+```{r}
+print(colnames(AdData[1]))
+```
+
+
+The following code adds all of the modified data to the dataset to prepare it for looping.
+
+```{r}
+#Adding all the modified data to AdData so that we can easily loop through and run linear regression
+  AdData = cbind(AdData, SqrtTV = sqrt(AdData$TV))
+  AdData = cbind(AdData, SqrtRadio = sqrt(AdData$radio))
+  AdData = cbind(AdData, SqrtNewspaper = sqrt(AdData$newspaper))
+  AdData = cbind(AdData, SqTV = AdData$TV^2)
+  AdData = cbind(AdData, SqRadio = AdData$radio^2)
+  AdData = cbind(AdData, SqNewspaper = AdData$newspaper^2)
+  AdData = cbind(AdData, TVRadio = AdData$TV*AdData$radio)
+  AdData = cbind(AdData, TVNews = AdData$TV*AdData$newspaper)
+  AdData = cbind(AdData, NewsRadio = AdData$newspaper*AdData$radio)
+  head(AdData)
+
+```
+
+Create a testing and training set
+```{r}
+num_samples = dim(AdData)[1]
+sampling.rate = 0.8
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(AdData[training, ])
+testing <- setdiff(1:num_samples, training)
+testingSet <- subset(AdData[testing, ])
+```
+
+Runs linear regression and then checks to see which of the models has the lowest mse. It then saves the i which tracks which column so that you can find it after the loop completes. 
+
+```{r}
+#Linear Regression w/ Sales ~ One Independent Variable
+regModel <- lm(paste(colnames(trainingSet)[1], "~" , colnames(trainingSet)[2]), data=trainingSet)
+predictions <- predict(regModel,testingSet)
+error = predictions - testingSet$sales
+mse = mean(error^2)
+
+for(i in 3:13){
+   regModel <- lm(paste(colnames(trainingSet)[1], "~" , colnames(trainingSet)[i]), data=trainingSet)
+   predictions <- predict(regModel,testingSet)
+   error = predictions - testingSet$sales
+   if(mean(error^2)<mse){
+    mse = mean(error^2)
+    column = i
+   }
+}
+
+#This displays the column name and the mse of linear regression with the lowest error. 
+colnames(AdData)[column]
+print(mse)
+
+
+```
+
+```{r}
+regModel <- lm(paste(colnames(AdData)[1], "~" , colnames(AdData)[column]), data=AdData)
+predictions <- predict(regModel,testingSet)
+residuals = abs(predictions - testingSet$sales)
+hist(residuals)
+
+```
+
+Shows the normal probability plot and the line for the data. The data shows that our dependent variable is normally distributed because the points seem to plot into a straight line (althrough not perfectly)
+```{r}
+qqnorm(residuals)
+qqline(residuals)
+```
+
+Part 2 of the Assignment
+```{r}
+AdData2 <- read.csv("advertising_set2.csv", header=TRUE)
+head(AdData2)
+```
+
+Creating the testing and training sets and also creating the decision tree model
+
+```{r}
+num_samples = dim(AdData2)[1]
+sampling.rate = 0.8
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(AdData2[training, ])
+testing <- setdiff(1:num_samples, training)
+testingSet <- subset(AdData2[testing, ])
+
+library(rpart)
+decTreeModel <- rpart(sales~TV+radio+newspaper+id, data=trainingSet)
+plot(decTreeModel)
+text(decTreeModel)
+plotcp(decTreeModel)
+pruned_decTreeModel <- prune(decTreeModel, cp= .035)
+
+
+```
+Creating the regression model
+The formula of the regression function is f(x)= 2.8888394 + 0.0509978(TV) + 0.2221964(RadiO) + 0.0121378(Newspaper)
+
+```{r}
+regModel1 <- lm(sales~TV+radio+newspaper+id, data=trainingSet)
+summary(regModel1)
+#Removing ID because it is not significant
+regModel1 <- lm(sales~TV+radio+newspaper, data=trainingSet)
+summary(regModel1)
+
+
+```
+Of the two models, the better model with the lower mse is the regression model. Therefore, it is recommended that we use the regression model over the tree model. 
+
+```{r}
+regpredictions <- predict(regModel1,testingSet)
+error = regpredictions - testingSet$sales
+regmse = mean(error^2)
+
+treepredictions <- predict(pruned_decTreeModel, testingSet)
+error = treepredictions - testingSet$sales
+treemse = mean(error^2)
+
+print(treemse)
+print(regmse)
+
+
+```
+
+Question 14. 
+
+Regression
+
+Pros: 
+- Is better at handling continuous data.
+- Less susceptible (but still a worry) to overfitting
+
+Cons:
+- Not very good at handling categorical data without dummy coding. 
+- Have to check for correlation, etc. yourself and remove 
+
+Decision Trees
+
+Pros: 
+- Very good for categorical data
+- Automatically takes into account interactions between variables 
+
+Cons: 
+- They are not as good at handling continous data. 
+- They are also prone to overfitting 
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+  

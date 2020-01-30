@@ -1,0 +1,116 @@
+---
+title: "Class Exercice 1"
+output: html_notebook
+---
+
+Name:  
+ID:  
+
+# Diamonds price prediction
+
+You are given two sets of data. The first is diamonds_data.csv which contains properties of several diamonds along with the selling price (Assume that this price is adjusted to present day value). Your objective is to predict a good price for each of the diamonds that are in the set diamonds_predictions.csv
+
+
+1. Read the data that is in diamonds_dataset.csv and store it in DiamondsData
+
+```{r}
+DiamondsData<-read.csv("diamonds_dataset.csv", header = TRUE)
+head(DiamondsData)
+```
+
+2. Develop a decision tree model to predict the price of diamonds
+
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+decTreeModel<-rpart(price~carat+cut+color+clarity+depth+table,data=DiamondsData)
+prp(decTreeModel)
+```
+
+
+
+
+3. Read the data that is in diamonds_predictions.csv and store in decTreeDiamondsPredictions
+
+
+
+```{r}
+decTreeDiamondsPredictions<-read.csv("diamonds_predictions.csv", header = TRUE)
+head(decTreeDiamondsPredictions)
+```
+
+
+
+4. Apply your decision tree model to predict the price of diamonds in the decTreeDiamondsPredictions data set. Store the predicted price in the price variable that is in the decTreeDiamondsPredictions.
+
+
+```{r}
+decTreeDiamondsPredictions$price <- predict(decTreeModel,decTreeDiamondsPredictions)
+head(decTreeDiamondsPredictions)
+```
+
+
+
+5. Develop a regression model to predict the price diamonds
+
+```{r}
+#Removing cut, color, and clarity it does not offer numerical data and therefore, we cannot check if there is a correlation between it and the rest of the data. 
+newDiamondsData = subset(DiamondsData, select= -c(cut,color,clarity))
+head(newDiamondsData)
+#Running the correlation table and removing features that are too correlated with each other. Removing price because we want to test for price. 
+correlationTable = subset(newDiamondsData, select= -c(price))
+head(correlationTable)
+round(cor(correlationTable),2)
+correlationTable = subset(correlationTable, select = -c(x))
+round(cor(correlationTable),2)
+correlationTable = subset(correlationTable, select = -c(y))
+round(cor(correlationTable),2)
+correlationTable = subset(correlationTable, select = -c(z))
+round(cor(correlationTable),2)
+#Correlation table now contains the features that are not correlated with each other
+#Next is the creation of a regression model
+regModel = lm(newDiamondsData$price ~ newDiamondsData$carat + newDiamondsData$depth + newDiamondsData$table)
+summary(regModel)
+#All variables are significant so all three variables will affect price in some way. 
+```
+
+
+
+6. Read the data that is in diamonds_predictions.csv and store in regressionDiamondsPredictions
+
+
+```{r}
+regressionDiamondsPredictions <- read.csv("diamonds_predictions.csv", header = TRUE)
+head(regressionDiamondsPredictions)
+```
+
+
+7. Apply your regression model to predict the price of diamonds in the regressionDiamondsPredictions. data set. Store the predicted price in the price variable that is in the regressionDiamondsPredictions.
+
+```{r}
+nrow(regressionDiamondsPredictions)
+regressionDiamondsPredictions$price <- predict(regModel,regressionDiamondsPredictions)
+head(regressionDiamondsPredictions)
+```
+
+
+
+8. The actual prices are stored in diamonds_actual_prices.csv. Use these actual prices to evaluate the accuracy of the regression model and the decision tree model
+
+```{r}
+ActualPrices <- read.csv("diamonds_actual_prices.csv", header=TRUE)
+head(ActualPrices)
+decisionTreeError = decTreeDiamondsPredictions$price - ActualPrices
+mseDecisionTree = mean(decisionTreeError^2)
+print(mseDecisionTree)
+regressionError = regressionDiamondsPredictions$price - ActualPrices
+mseRegression = mean(regressionError^2)
+print(mseRegression)
+
+```
+
+
+
+

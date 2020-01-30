@@ -1,0 +1,80 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+Packages <- c(
+      "dplyr",
+      "tidyr",
+      "ggplot2",
+      "rpart",
+      "rpart.plot",
+      "caTools")
+
+lapply(Packages, library, character.only = TRUE)
+```
+
+```{r}
+data <- read.csv("KaggleV2-May-2016.csv", header= TRUE, stringsAsFactors = FALSE)
+head(data)
+
+data$Age[data$Age < 0] <- 0
+
+#Th following creates a column for the number of days between the scheduling day and the appointment day
+data$dateDiff <- as.Date(as.character(data$AppointmentDay, "%Y, %m, %d")) - as.Date(as.character(data$ScheduledDay, "%Y, %m, %d"))
+data$dateDiff[data$dateDiff >= 50] <- "Other"
+data$dateDiff[data$dateDiff < 0] <- 0
+print(unique(data$dateDiff))
+
+
+#To create less factors for Neighborhood, I will condense the data by grouping non-frequent data entries into an "Other" category.
+toCondense <- names(which(prop.table(table(data$Neighbourhood)) < .01))
+data$Neighbourhood[data$Neighbourhood %in% toCondense] <- "Other"
+
+
+head(data)
+#The number of factors in Neighborhood has been reduced to an acceptable amount to be able to run a deceision tree model
+unique(data$Neighbourhood)
+
+status_table <- table(data$No.show)
+status_table
+```
+The following shows a chart of the number of no shows vs. the number of attended appointments
+```{r}
+#Shows the number of no shows vs shows (No being a show up and yes being a no show)
+ggplot(data, aes(x=No.show, fill=No.show)) + geom_bar()
+
+```
+The following shows density of no shows and non no shows based on the day of the week the appointment is and when it was booked. It shows that there is a lot of data for Friday and almost no data for Saturday and Sunday (which makes sense because many places close). It does not show a difference in show/no show when it comes to the date however. 
+```{r}
+#The following shows the density of show vs no show depending on the day the appointment is made and when the appointment is
+ggplot(data, aes(x=weekdays(as.Date(data$ScheduledDay)), fill=No.show)) + geom_density() + facet_grid(.~No.show)
+ggplot(data, aes(x=weekdays(as.Date(data$AppointmentDay)), fill=No.show)) + geom_density() + facet_grid(.~No.show)
+
+#The data shows that most appointments occur on Fridays but there is no correlation for no show vs. show when it comes to the day the appointment is or when the appointment is booked
+```
+The following is some visualization on how age can affect showing up to an appointment. We can see that we have a lot more data for the younger - middle age portion of the population and that the age for not showing up is a little less than the age for showing up (average ages), which may signify that younger people have a higher risk of not showing up
+```{r}
+#Shows a histogram of data for no shows based on age. From the first graph it looks like younger people don't show up to appointments more than older people
+ggplot(data, aes(x=Age)) + geom_histogram(bins=40)
+ggplot(data, aes(x=No.show, y=Age, col=No.show)) + geom_boxplot()
+```
+The following is some visualization on how gender affects showing up to an appointment. It shows that there are more women than men in the dataset (which implies that women see doctors more than men) and that gender makes no no real difference in whether or not a patient will show up to an appointment
+```{r}
+#There are more women in the dataset than men, which implies that women see doctors more than men. 
+#There does not seem to be a distinct difference in no show when it comes to gender. 
+ggplot(data, aes(x=Gender, fill=Gender)) + geom_bar(position="dodge")
+ggplot(data, aes(x=Gender, fill=No.show)) + geom_bar(position="fill")
+```
+The following checks how important certain features are to determining whether or not a patient will show up to the appointment or not. The biggest findings are that people are much more likely to miss the appointment if they have received a SMS reminder, which seems to be against what it should be doing. In addition, heavily handicapped patients are more likely to miss an appointment. 
+```{r}
+ggplot(data, aes(x=SMS_received, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Diabetes, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Alcoholism, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Hipertension, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Handcap, fill=No.show)) + geom_bar(position="fill")
+ggplot(data, aes(x=Scholarship, fill=No.show)) + geom_bar(position="fill")
+```
+

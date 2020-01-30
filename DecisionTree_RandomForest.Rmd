@@ -1,0 +1,188 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+The following block of code reads the data from the CSV file and inputs it into R so that analysis can be done. 
+
+```{r}
+medicalData <- read.csv("KaggleV2-May-2016.csv", header=TRUE, stringsAsFactors = FALSE)
+head(medicalData)
+
+
+#Removing the first two columns because they will not be useful towards calculating whether or not a patient shows up
+medicalData <- medicalData[c(3:14)]
+
+#There are two many factors in Neighborhood, ScheduleDay, and AppointmentDay so I will try to simplify the data to enable the creation of the DecisionTree + Random Forests
+#unique(medicalData$Neighbourhood)
+
+#Fixes the age data because some ages are less than 0 which makes no sense.
+medicalData$Age[medicalData$Age < 0] <- 0
+
+#Th following creates a column for the number of days between the scheduling day and the appointment day
+medicalData$dateDiff <- as.Date(as.character(medicalData$AppointmentDay, "%Y, %m, %d")) - as.Date(as.character(medicalData$ScheduledDay, "%Y, %m, %d"))
+medicalData$dateDiff[medicalData$dateDiff >= 50] <- "Other"
+medicalData$dateDiff[medicalData$dateDiff < 0] <- 0
+print(unique(medicalData$dateDiff))
+
+#The following code breaks the datetime data into just the day and will be used instead
+medicalData$ScheduledDay <- weekdays(as.Date(medicalData$ScheduledDay))
+medicalData$AppointmentDay <- weekdays(as.Date(medicalData$AppointmentDay))
+
+#To create less factors for Neighborhood, I will condense the data by grouping non-frequent data entries into an "Other" category.
+toCondense <- names(which(prop.table(table(medicalData$Neighbourhood)) < .01))
+medicalData$Neighbourhood[medicalData$Neighbourhood %in% toCondense] <- "Other"
+
+
+head(medicalData)
+#The number of factors in Neighborhood has been reduced to an acceptable amount to be able to run a deceision tree model
+unique(medicalData$Neighbourhood)
+
+```
+
+The following bundle of code seperates the data into training and testing sets because we were not given any test/training data - just one big dataset
+
+```{r}
+num_samples = dim(medicalData)[1]
+sampling.rate = 0.8
+
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(medicalData[training, ])
+
+testing <- setdiff(1:num_samples, training)
+testingSet <- subset(medicalData[testing, ])
+```
+
+```{r}
+library(rpart)
+#Strangely, creating a decTreeModel returns the error "fit is not a tree, just a root". Googling this says that the model is not able to find anything to map.
+#decTreeModel <- rpart(No.show ~ Gender + ScheduledDay + AppointmentDay + Age + Scholarship + Hipertension + Diabetes + Alcoholism + Handcap + SMS_received, data = trainingSet)
+#I will make the table overfit to see if it is able to create a decision tree model and then prune it with cp
+#I pruned it with cp = 0.0001 because the lower the cp, the higher the error was. However, if I lower cp too much then there will be no tree
+decTreeModel <- rpart(No.show ~., data = trainingSet, control = rpart.control(minsplit = 1, minbucket = 1, cp=.0001))
+#plotcp(decTreeModel)
+plot(decTreeModel, margin=0.1)
+text(decTreeModel)
+```
+
+```{r}
+#The following code is used to calculate the error rate of the decTreeModel
+sizeTestSet = dim(testingSet)[1]
+decTreePredictions <- predict(decTreeModel, testingSet, type="class")
+decTreeError <- sum(decTreePredictions!=testingSet$No.show)
+decTreeMisclassification = decTreeError/sizeTestSet
+print(decTreeMisclassification)
+```
+
+```{r}
+#Calculate the average error to remove the variability of creating the testing and training set
+decTreeAllErrors=c()
+
+for(fold in 1:10){
+  num_samples = dim(medicalData)[1]
+  sampling.rate = 0.8
+
+  training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+  trainingSet <- subset(medicalData[training, ])
+
+  testing <- setdiff(1:num_samples, training)
+  testingSet <- subset(medicalData[testing, ])
+  
+  decTreeModel <- rpart(No.show ~., data = trainingSet, control = rpart.control(minsplit = 1, minbucket = 1, cp=.0001))
+  
+  sizeTestSet = dim(testingSet)[1]
+  decTreePredictions <- predict(decTreeModel, testingSet, type="class")
+  decTreeError <- sum(decTreePredictions!=testingSet$No.show)
+  decTreeMisclassification = decTreeError/sizeTestSet
+  decTreeAllErrors[fold]=decTreeMisclassification
+}
+#The average of all the errors
+print(mean(decTreeAllErrors))
+
+```
+
+```{r}
+library(randomForest)
+
+trainingSet$Age <-cut(trainingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+testingSet$Age <-cut(testingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+#First convert all the data into factors so that the randomForest model can be generated
+for(i in names(trainingSet)){
+  trainingSet[[i]]=factor(trainingSet[[i]])
+}
+for(i in names(testingSet)){
+  testingSet[[i]]=factor(testingSet[[i]])
+}
+
+#Have to add this or else the randomForest thinks the training and testing set have different factors
+for(i in names(testingSet)){
+  levels(testingSet[[i]]) <- levels(trainingSet[[i]])
+}
+# trainingSet$Gender = factor(trainingSet$Gender)
+# trainingSet$AppointmentDay = factor(trainingSet$AppointmentDay)
+# trainingSet$ScheduledDay = factor(trainingSet$ScheduledDay)
+# trainingSet$Neighbourhood = factor(trainingSet$Neighbourhood)
+# trainingSet$Age <-cut(trainingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+# testingSet$Gender = factor(testingSet$Gender)
+# testingSet$AppointmentDay = factor(testingSet$AppointmentDay)
+# testingSet$ScheduledDay = factor(testingSet$ScheduledDay)
+# testingSet$Neighbourhood = factor(testingSet$Neighbourhood)
+# testingSet$Age <-cut(testingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+
+```
+
+```{r}
+#The error does not look like it declindes at all so I will prune the number of trees to 50 (as there is a VERY small decline in error)
+#ranForestModel <- randomForest(No.show ~., data = trainingSet)
+ranForestModel <- randomForest(No.show ~., data = trainingSet, ntree = 50)
+plot(ranForestModel)
+```
+
+```{r}
+ranForestPredictions <- predict(ranForestModel, testingSet, type="class")
+ranForestError <- sum(ranForestPredictions!=testingSet$No.show)
+ranForestMisclassification = ranForestError/sizeTestSet
+print(ranForestMisclassification)
+```
+
+```{r}
+#Calculate the average error to remove the variability of creating the testing and training set
+ranForestAllErrors=c()
+
+for(fold in 1:10){
+  num_samples = dim(medicalData)[1]
+  sampling.rate = 0.8
+
+  training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+  trainingSet <- subset(medicalData[training, ])
+
+  testing <- setdiff(1:num_samples, training)
+  testingSet <- subset(medicalData[testing, ])
+  
+  trainingSet$Age <-cut(trainingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+  testingSet$Age <-cut(testingSet$Age,c(-Inf,0,18,24,34,44,54,64,Inf))
+  
+  for(i in names(trainingSet)){
+    trainingSet[[i]]=factor(trainingSet[[i]])
+  }
+  for(i in names(testingSet)){
+    testingSet[[i]]=factor(testingSet[[i]])
+  }
+  for(i in names(testingSet)){
+    levels(testingSet[[i]]) <- levels(trainingSet[[i]])
+  }
+  
+  ranForestModel <- randomForest(No.show ~., data = trainingSet, ntree = 50)
+  
+  sizeTestSet = dim(testingSet)[1]
+  ranForestPredictions <- predict(ranForestModel, testingSet, type="class")
+  ranForestError <- sum(ranForestPredictions!=testingSet$No.show)
+  ranForestMisclassification = ranForestError/sizeTestSet
+  ranForestAllErrors[fold]=ranForestMisclassification
+}
+#The average of all the errors
+print(mean(ranForestAllErrors))
+
+```
+
+A summary of the overall findings of the decision tree vs. random forest models is that the random forest model gives a little bit lower of a misclassification rate. In addition, it also has the benefit of being less prone to overfitting than the decision tree, which is a big plus in this case because we had to allow the decision tree model to overfit in order to even generate a model. Therefore, all things considered, the random forest model is superior to the decision tree model for this data. 

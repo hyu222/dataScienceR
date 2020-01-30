@@ -1,0 +1,105 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+help(names)
+help(complete.cases)
+help(sum)
+```
+
+Reads the Titanic Data and displays the Label titles.
+
+```{r}
+titanicData = read.csv("titanic.csv", header=TRUE)
+titanicLabels = names(titanicData)
+titanicLabels
+str(titanicData)
+
+```
+
+Code to create a decision tree to predict who would survive the titanic disaster. Based on the decision tree, the passengers who are male, under the age of 6.5, and have an SibSp lower than 2.5 have a 100% survival rate. The second highest survival rate are women who have a Pclass lower than 2.5 (95% survival rate). Interestingly enough, it seems as though fare/class did not have that much of an effect when it came to survival. Males (who are not children) had a very low survival rate regardless of class. As for women, it seems as though paying a higher fare actually made them worse off. The evacuation looks to have focused heavily on women and children (with class and ticket fare not having much effect on survival).
+
+```{r}
+library(rpart)
+#These libraries are to help me see the data a little bit better because sometimes viewing just the plain decision tree can be difficult to interpret
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+decTreeModel <- rpart(Survived~ Pclass+Sex+Age+SibSp+Parch+Fare+Embarked, data = titanicData)
+plot(decTreeModel)
+text(decTreeModel)
+#Creates a more detailed decision tree that helps me to understand the tree better.
+fancyRpartPlot(decTreeModel)
+```
+
+Assignment 4 Part 2
+Reading the Churn data
+
+```{r}
+churnData = read.csv("churn.csv", header = TRUE)
+head(churnData)
+# names(churnData) 
+# sapply(churnData, function(x)all(is.na(x)))
+```
+Creating the training and testing sets.
+
+```{r}
+num_samples = dim(churnData)[1]
+sampling.rate = .65
+training <- sample(1:num_samples, sampling.rate * num_samples, replace = FALSE)
+trainingSet <- subset(churnData[training, ])
+testing <- setdiff(1:num_samples, training)
+testingSet <- subset(churnData[testing, ])
+
+```
+
+Create a randomForest to try and predict the categorical variable churn. I have removed ID (because it is just an identifier) and PhoneService because it only has 1 value (Yes)
+
+```{r}
+library(randomForest)
+forestModel <- randomForest(Churn~gender+SeniorCitizen+MaritalStatus+Dependents+tenure+MultipleLines+InternetService+OnlineSecurity+OnlineBackup+DeviceProtection+TechSupport+StreamingTV+StreamingMovies+Contract+PaperlessBilling+PaymentMethod, data=trainingSet, na.action = na.exclude)
+plot(forestModel)
+predictedLabels <- predict(forestModel, testingSet)
+
+head(testingSet)
+head(predictedLabels)
+
+```
+
+This portion of the code is used to evaluate the accuracy of the model on the testing set. The calculated error rate is approximately 15% (meaning 15% of the predictions were incorrect). 
+
+```{r}
+
+#Finds the error rate of the model
+sizeTestSet = dim(testingSet)[1]
+error = sum(predictedLabels != testingSet$Churn)
+errorRate = error/sizeTestSet
+print(errorRate)
+
+#Calculates how many times the model guessed Yes
+Yes = (predictedLabels == 'Yes')
+print(sum(Yes == TRUE))
+#Then counts how many times the model guessed Yes but was wrong
+YesWrong = ((predictedLabels != testingSet$Churn) & Yes)
+print(sum(YesWrong == TRUE))
+#Calculates how many times the model guessed No
+No = (predictedLabels == 'No')
+print(sum(No == TRUE))
+#Calculates how many times the model guessed No but was wrong
+NoWrong = ((predictedLabels != testingSet$Churn) & No)
+print(sum(NoWrong == TRUE))
+
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
